@@ -14,7 +14,7 @@ from  safetensors import safe_open
 from peft import AutoPeftModelForSequenceClassification
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-
+from reward_model_inference_utils import run_redundancy_tests, process_examples, calculate_accuracy
 
 
 filter_subsets_dict = {'chat': ['alpacaeval-easy', 'alpacaeval-length', 'alpacaeval-hard', 'mt-bench-easy', 'mt-bench-medium'],
@@ -30,6 +30,8 @@ def parse_args():
     parser.add_argument("--shorten_size", default="768", help="Take full feature length or only the first 768 dimensions")  
     parser.add_argument("--using_peft", action='store_true', help='If set, use a fine-tuned PEFT model, otherwise use the base model')
     parser.add_argument("--eval_only", action='store_true', help='If set, only get the model accuracy, and not store the data')
+    parser.add_argument("--redundant_pkl_path", type=str, default="features_without_peft/Skywork-Reward-Llama-3.1-8B-v0.2/redundant_safety.pkl", help='Path to the pickle file containing list of redundant examples')
+    parser.add_argument("--test_redundant", action='store_true', help='If set, perform redundancy tests')
 
     return parser.parse_args()
 
@@ -52,79 +54,6 @@ def filter_dataset(dataset, filter_by_subset):
         return filtered_dataset
 
     return dataset
-
-def process_examples(model, tokenizer, dataset, device, args):
-    """Process dataset examples and compute features."""
-    
-    features_chosen = []
-    features_chosen_full_length = []
-
-    features_rejected = []
-    features_rejected_full_length = []
-    features_diff = []
-    chosen_scores = []
-    rejected_scores = []
-
-    for example in tqdm(dataset, desc="Processing examples"):
-        prompt = example['prompt']
-        chosen_completion = example['chosen']
-        rejected_completion = example['rejected']
-
-        conv1 = [{"role": "user", "content": prompt}, {"role": "assistant", "content": chosen_completion}]
-        conv2 = [{"role": "user", "content": prompt}, {"role": "assistant", "content": rejected_completion}]
-
-        conv1_formatted = tokenizer.apply_chat_template(conv1, tokenize=False)
-        conv2_formatted = tokenizer.apply_chat_template(conv2, tokenize=False)
-
-        conv1_tokenized = tokenizer(conv1_formatted, return_tensors="pt", truncation=True).to(device).to(torch.bfloat16)
-        conv2_tokenized = tokenizer(conv2_formatted, return_tensors="pt", truncation=True).to(device).to(torch.bfloat16)
-
-        with torch.no_grad():
-            with torch.amp.autocast('cuda'):
-                output_1 = model(**conv1_tokenized, output_hidden_states=True)
-                output_2 = model(**conv2_tokenized, output_hidden_states=True)
-
-                score_chosen = output_1.logits[0][0].item()
-                score_rejected = output_2.logits[0][0].item()
-
-                chosen_scores.append(score_chosen)
-                rejected_scores.append(score_rejected)
-
-
-                if args.using_peft:
-                    hidden_states1 = output_1.hidden_states[-1][:, -1, :]
-                    hidden_states2 = output_2.hidden_states[-1][:, -1, :]
-
-                    cls_embedding1 = model.score[0](hidden_states1).cpu().squeeze()
-                    cls_embedding2 = model.score[0](hidden_states2).cpu().squeeze()
-
-                else:
-
-                    hidden_states1 = output_1.hidden_states
-                    hidden_states2 = output_2.hidden_states
-
-                    # Get the last token embedding that isn't a PAD
-
-                    cls_embedding1 = hidden_states1[-1][:, -1, :].cpu().squeeze()
-                    cls_embedding2 = hidden_states2[-1][:, -1, :].cpu().squeeze()
-
-                
-                if args.shorten_size:
-                    features_chosen.append(cls_embedding1[:int(args.shorten_size)].cpu())
-                    features_rejected.append(cls_embedding2[:int(args.shorten_size)].cpu())
-
-                    features_chosen_full_length.append(cls_embedding1[:int(args.shorten_size)].cpu())
-                    features_rejected_full_length.append(cls_embedding2[:int(args.shorten_size)].cpu())  
-                    features_diff.append((cls_embedding1[:int(args.shorten_size)] - cls_embedding2[:int(args.shorten_size)]).cpu())
-                else:
-                    features_chosen.append(cls_embedding1.cpu())
-                    features_rejected.append(cls_embedding2.cpu())
-
-    return torch.stack(features_chosen), torch.stack(features_rejected), \
-            torch.stack(features_chosen_full_length),  torch.stack(features_rejected_full_length), \
-            torch.stack(features_diff), chosen_scores, rejected_scores
-
-
 
 def process_deberta_examples(model, tokenizer, dataset, device, args):
     """Process dataset examples and compute features and scores for chosen and rejected completions."""
@@ -174,8 +103,6 @@ def process_deberta_examples(model, tokenizer, dataset, device, args):
            torch.stack(features_chosen), torch.stack(features_rejected), \
            torch.stack(features_diff), chosen_scores, rejected_scores
 
-
-
 def main():
     args = parse_args()
     # base_model_name = "Skywork/Skywork-Reward-Llama-3.1-8B"
@@ -186,7 +113,7 @@ def main():
     # tokenizer_name = 'Skywork/Skywork-Reward-Llama-3.1-8B'
     peft_name = '/scratch/general/vast/u1472659/lora_llama_ft/Skywork-Reward-Llama-3.1-8B-v0.2_BT_RM_len512_lora32_1e-05_dataSkywork-Reward-Preference-80K-v0.2/'
     # logging_directory_path = "~/logging/"
-    logging_directory_path = "/uufs/chpc.utah.edu/common/home/u1472659/ValueAlignmentVerification/logging/"
+    logging_directory_path = "~/alignment_benchmark_LLM/logging/"
     os.makedirs(logging_directory_path, exist_ok=True)
     model_name_short = model_name.split('/')[-1]
 
@@ -194,9 +121,7 @@ def main():
                         level=logging.INFO)
 
     cache_directory = "/scratch/general/vast/u1472659/huggingface_cache/"
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     dataset = load_dataset('allenai/reward-bench', split='filtered')
 
     # Filter dataset if chat_hard is enabled
@@ -238,7 +163,7 @@ def main():
         )
 
         mlp_layer.to(device)
-        # Replace the classifier with the MLP
+        # Replacing the classifier with the MLP, I've set the output layer size to be 512
         model.score = mlp_layer
         model.load_state_dict(tensors, strict=False)
         
@@ -279,14 +204,13 @@ def main():
     
     model.to(device)
     logging.info("Model downloaded and cached")
-
+    logging.info(model)
 
 
     if 'deberta' in model_name:
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
         features_diff, chosen_scores, rejected_scores = process_deberta_examples(model, tokenizer, filtered_dataset, device, args)
     else:
-        
         # Process the examples
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
         features_diff, chosen_scores, rejected_scores = process_examples(model, tokenizer, filtered_dataset, device, args)
@@ -294,20 +218,54 @@ def main():
     print("shape of features difference is {}".format(len(features_diff)))
     logging.info("shape of features difference is {}".format(len(features_diff)))
 
-    ###check the 87.4% accuracy for skyworks model.
-    chosen_np_arr = np.array(chosen_scores)
-    rejected_np_arr = np.array(rejected_scores)
+    accuracy, correct_count, chosen_np_arr, rejected_np_arr, correct_indices = calculate_accuracy(
+        chosen_scores, rejected_scores)
+    
+    logging.info(f"Total {correct_count} datapoints where we get correct predictions out of {len(chosen_scores)}")
+    logging.info(f"The percentage where score of chosen is greater than rejected is {accuracy:.2f}%")
+    print(f"The percentage where score of chosen is greater than rejected is {accuracy:.2f}%")
 
-    comparison = chosen_np_arr > rejected_np_arr
+    # ###check the 87.4% accuracy for skyworks model.
+    # chosen_np_arr = np.array(chosen_scores)
+    # rejected_np_arr = np.array(rejected_scores)
+    # comparison = chosen_np_arr > rejected_np_arr
+    # # Calculate the percentage where list A's elements are greater
+    # percentage = np.mean(comparison) * 100
+    # indices_of_greater = np.where(comparison)[0]
 
-    # Calculate the percentage where list A's elements are greater
-    percentage = np.mean(comparison) * 100
-    indices_of_greater = np.where(comparison)[0]
+    # logging.info("total {} datapoints where we get correct predictions ".format(len(indices_of_greater)))
 
-    logging.info("total {} datapoints where we get correct predictions ".format(len(indices_of_greater)))
+    # logging.info("the percentage where score of chosen is greater than rej is {}".format(percentage))
+    # print("the percentage where score of chosen is greater than rej is {}".format(percentage))
+    # logging.info(f" the feature size is {features_chosen.shape}")
 
-    logging.info("the percentage where score of chosen is greater than rej is {}".format(percentage))
-    print("the percentage where score of chosen is greater than rej is {}".format(percentage))
+    args.full_dataset_accuracy = accuracy
+
+    if args.test_redundant and not args.eval_only:
+        error_message = "Redundancy testing must be run with --eval_only flag to prevent unnecessarily saving features"
+        logging.error(error_message)
+        raise ValueError(error_message)
+
+    if args.test_redundant and args.redundant_pkl_path:
+        try:
+            with open(args.redundant_pkl_path, 'rb') as f:
+                redundant_examples = pkl.load(f)
+                
+            logging.info(f"Loaded {len(redundant_examples)} redundant examples from {args.redundant_pkl_path}")
+            
+            redundancy_results = run_redundancy_tests(chosen_scores, rejected_scores, redundant_examples, len(filtered_dataset))
+            
+            # Save redundancy test results
+            results_dir = os.path.join(logging_directory_path, "redundancy_results")
+            os.makedirs(results_dir, exist_ok=True)
+            
+            with open(os.path.join(results_dir, 
+                                    f"{model_name_short}_{args.filter_by_subset}_redundancy_results_abelation.pkl"), 'wb') as f:
+                pkl.dump(redundancy_results, f)
+                
+        except Exception as e:
+            logging.error(f"Error in redundancy testing: {str(e)}")
+            print(f"Error in redundancy testing: {str(e)}")
 
 
     if args.eval_only:
@@ -358,7 +316,7 @@ def main():
 
         print("writing only accurate fetaure differences")
         with open(os.path.join(model_directory, 'features_diff_correct_only_full_length_{}.pkl'.format(args.filter_by_subset)), 'wb') as f1:
-            pkl.dump(features_diff[indices_of_greater], f1)
+            pkl.dump(features_diff[correct_indices], f1)
 
 
 if __name__ == "__main__":
