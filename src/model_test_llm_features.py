@@ -1,4 +1,5 @@
 import os
+import json
 import glob
 import torch
 import logging
@@ -7,6 +8,8 @@ import numpy as np
 import pickle as pkl
 import torch.nn as nn
 from tqdm import tqdm
+from ldlreward import LDLRewardModel27B
+
 from peft import PeftModel
 from peft import PeftConfig
 from datasets import load_dataset
@@ -14,7 +17,7 @@ from  safetensors import safe_open
 from peft import AutoPeftModelForSequenceClassification
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from reward_model_inference_utils import run_redundancy_tests, process_examples, calculate_accuracy
+from reward_model_inference_utils import run_redundancy_tests, process_examples, calculate_accuracy, process_examples_ldl
 
 
 filter_subsets_dict = {'chat': ['alpacaeval-easy', 'alpacaeval-length', 'alpacaeval-hard', 'mt-bench-easy', 'mt-bench-medium'],
@@ -107,6 +110,8 @@ def main():
     args = parse_args()
     # base_model_name = "Skywork/Skywork-Reward-Llama-3.1-8B"
     model_name = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
+    # model_name = "lenovo/LDL-Reward-Gemma-2-27B-v0.1"
+    # model_name = "nicolinho/QRM-Gemma-2-27B"
     # model_name= "OpenAssistant/reward-model-deberta-v3-large-v2"
     # model_name = "microsoft/deberta-v3-large"
     # model_name = "/scratch/general/vast/u1472659/lora_llama_ft/merged_model/"
@@ -131,15 +136,17 @@ def main():
     print("Loading model and tokenizer...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_name,
-        torch_dtype=torch.bfloat16,
-        device_map=device,
-        cache_dir=cache_directory,
-        # attn_implementation="flash_attention_2",
-        num_labels=1,
-    )
+    if 'LDL-Reward' in model_name:
+        model = LDLRewardModel27B.from_pretrained(model_name,device_map='auto')
+    else:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            torch_dtype=torch.bfloat16,
+            device_map=device,
+            cache_dir=cache_directory,
+            # attn_implementation="flash_attention_2",
+            num_labels=1,
+        )
 
     get_modified_model = False
     print(args)
@@ -210,7 +217,11 @@ def main():
     if 'deberta' in model_name:
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
         features_diff, chosen_scores, rejected_scores = process_deberta_examples(model, tokenizer, filtered_dataset, device, args)
-    else:
+    elif 'LDL-Reward' in model_name:
+
+        features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
+        features_diff, chosen_scores, rejected_scores = process_examples_ldl(model, tokenizer, filtered_dataset, device, args)
+    else:    
         # Process the examples
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
         features_diff, chosen_scores, rejected_scores = process_examples(model, tokenizer, filtered_dataset, device, args)
@@ -258,10 +269,22 @@ def main():
             # Save redundancy test results
             results_dir = os.path.join(logging_directory_path, "redundancy_results")
             os.makedirs(results_dir, exist_ok=True)
-            
-            with open(os.path.join(results_dir, 
-                                    f"{model_name_short}_{args.filter_by_subset}_redundancy_results_abelation.pkl"), 'wb') as f:
-                pkl.dump(redundancy_results, f)
+
+            print(f"writing results from redundancy tests to {results_dir}/{model_name_short}/{args.filter_by_subset}")
+            print(redundancy_results)
+            if "nnls" in args.redundant_pkl_path:
+
+                with open(os.path.join(results_dir, 
+                                        f"{model_name_short}_{args.filter_by_subset}_nnls_redundancy_results_abelation.json"), 'w') as f:
+                    json.dump(redundancy_results, f, indent = 4)
+            elif "lstsq" in args.redundant_pkl_path :
+                with open(os.path.join(results_dir, 
+                                        f"{model_name_short}_{args.filter_by_subset}_lstsq_redundancy_results_abelation.json"), 'w') as f:
+                    json.dump(redundancy_results, f, indent = 4)
+            else:
+                with open(os.path.join(results_dir, 
+                                        f"{model_name_short}_{args.filter_by_subset}_redundancy_results_abelation.json"), 'w') as f:
+                    json.dump(redundancy_results, f, indent = 4)
                 
         except Exception as e:
             logging.error(f"Error in redundancy testing: {str(e)}")
@@ -306,7 +329,6 @@ def main():
                 pkl.dump(features_var, f)
 
     if len(features_diff) > 0:
-
 
         logging.info("here writing difference, {}".format(features_diff.shape))
 

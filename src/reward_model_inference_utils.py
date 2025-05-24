@@ -59,6 +59,61 @@ def run_redundancy_tests(chosen_scores, rejected_scores, redundant_indices, tota
         }
     }
 
+
+def process_examples_ldl(model, tokenizer, dataset, device, args):
+
+    """Process dataset examples and compute features."""
+    
+    features_chosen = []
+    features_chosen_full_length = []
+
+    features_rejected = []
+    features_rejected_full_length = []
+    features_diff = []
+    chosen_scores = []
+    rejected_scores = []
+
+    for example in tqdm(dataset, desc="Processing examples"):
+        prompt = example['prompt']
+        chosen_completion = example['chosen']
+        rejected_completion = example['rejected']
+
+        conv1 = [{"role": "user", "content": prompt}, {"role": "assistant", "content": chosen_completion}]
+        conv2 = [{"role": "user", "content": prompt}, {"role": "assistant", "content": rejected_completion}]
+
+        conv1_formatted = tokenizer.apply_chat_template(conv1, tokenize=False)
+        conv2_formatted = tokenizer.apply_chat_template(conv2, tokenize=False)
+
+        conv1_tokenized = tokenizer(conv1_formatted, return_tensors="pt", truncation=True).to(device)
+        conv2_tokenized = tokenizer(conv2_formatted, return_tensors="pt", truncation=True).to(device)
+
+        with torch.no_grad():
+            with torch.amp.autocast('cuda'):
+                output_1 = model(conv1_tokenized, output_hidden_states=True)
+                output_2 = model(conv2_tokenized, output_hidden_states=True)
+
+                score_chosen = output_1.logits[0][0].item()
+                score_rejected = output_2.logits[0][0].item()
+
+                chosen_scores.append(score_chosen)
+                rejected_scores.append(score_rejected)
+
+                hidden_states1 = output_1.hidden_states
+                hidden_states2 = output_2.hidden_states
+
+                # Get the last token embedding that isn't a PAD
+
+                cls_embedding1 = hidden_states1[-1][:, -1, :].cpu().squeeze()
+                cls_embedding2 = hidden_states2[-1][:, -1, :].cpu().squeeze()
+
+               
+                features_chosen.append(cls_embedding1.cpu())
+                features_rejected.append(cls_embedding2.cpu())
+
+    return torch.stack(features_chosen), torch.stack(features_rejected), \
+            torch.stack(features_chosen_full_length),  torch.stack(features_rejected_full_length), \
+            torch.stack(features_diff), chosen_scores, rejected_scores
+
 def process_examples(model, tokenizer, dataset, device, args):
     """Process dataset examples and compute features."""
     
