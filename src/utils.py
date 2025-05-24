@@ -1,11 +1,15 @@
 import pickle
-
+import warnings
 import numpy as np
-from sklearn.metrics import mean_squared_error
+
+warnings.filterwarnings('ignore')
+
+
+
 from numpy.linalg import lstsq
 from scipy.optimize import nnls
-import warnings
-warnings.filterwarnings('ignore')
+from sklearn.metrics import mean_squared_error
+
 
 def load_all_data(features_file_name = 'features_trained_from_scratch__grammaticality'):
     print("Loading data...")
