@@ -2,3 +2,6 @@
 exploring redundancy removal and alignment for LLM reward models
 
 Idea is to see if any test examples can be removed because they do not add any new half space constraints. If yes, does the performance drop, increase or decrease on the test set after the removal. 
+
+
+This employs a linear combination test that approximates redundancy in datatsets. 
