@@ -1,4 +1,11 @@
 import os
+
+os.environ["HF_HOME"] = "/scratch/general/vast/u1472659/huggingface_cache"
+os.environ["TRANSFORMERS_CACHE"] = "/scratch/general/vast/u1472659/huggingface_cache/transformers"
+os.environ["HF_DATASETS_CACHE"] = "/scratch/general/vast/u1472659/huggingface_cache/datasets"
+
+cache_directory = "/scratch/general/vast/u1472659/huggingface_cache/"
+
 import json
 import glob
 import torch
@@ -10,6 +17,8 @@ import torch.nn as nn
 from tqdm import tqdm
 from ldlreward import LDLRewardModel27B
 
+
+
 from peft import PeftModel
 from peft import PeftConfig
 from datasets import load_dataset
@@ -17,7 +26,7 @@ from  safetensors import safe_open
 from peft import AutoPeftModelForSequenceClassification
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from reward_model_inference_utils import run_redundancy_tests, process_examples, calculate_accuracy, process_examples_ldl
+from reward_model_inference_utils import run_redundancy_tests, process_examples, calculate_accuracy, process_examples_gemma
 
 
 filter_subsets_dict = {'chat': ['alpacaeval-easy', 'alpacaeval-length', 'alpacaeval-hard', 'mt-bench-easy', 'mt-bench-medium'],
@@ -108,12 +117,10 @@ def process_deberta_examples(model, tokenizer, dataset, device, args):
 
 def main():
     args = parse_args()
-    # base_model_name = "Skywork/Skywork-Reward-Llama-3.1-8B"
-    model_name = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
-    # model_name = "lenovo/LDL-Reward-Gemma-2-27B-v0.1"
-    # model_name = "nicolinho/QRM-Gemma-2-27B"
+    # model_name = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
+    model_name = "nicolinho/QRM-Gemma-2-27B"
+    # model_name = "ShikaiChen/LDL-Reward-Gemma-2-27B-v0.1"
     # model_name= "OpenAssistant/reward-model-deberta-v3-large-v2"
-    # model_name = "microsoft/deberta-v3-large"
     # model_name = "/scratch/general/vast/u1472659/lora_llama_ft/merged_model/"
     # tokenizer_name = 'Skywork/Skywork-Reward-Llama-3.1-8B'
     peft_name = '/scratch/general/vast/u1472659/lora_llama_ft/Skywork-Reward-Llama-3.1-8B-v0.2_BT_RM_len512_lora32_1e-05_dataSkywork-Reward-Preference-80K-v0.2/'
@@ -124,8 +131,8 @@ def main():
 
     logging.basicConfig(filename=os.path.join(logging_directory_path, f"{model_name_short}_for_{args.filter_by_subset}_{args.shorten_size}.txt"), filemode='w',
                         level=logging.INFO)
-
-    cache_directory = "/scratch/general/vast/u1472659/huggingface_cache/"
+    
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset = load_dataset('allenai/reward-bench', split='filtered')
 
@@ -135,18 +142,24 @@ def main():
     # Only load the model and tokenizer after filtering the dataset
     print("Loading model and tokenizer...")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if 'LDL-Reward' in model_name:
-        model = LDLRewardModel27B.from_pretrained(model_name,device_map='auto')
+    if 'QRM-Gemma' in model_name:
+        model = AutoModelForSequenceClassification.from_pretrained(model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map=device, cache_dir=cache_directory, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, cache_dir=cache_directory)
+    elif 'LDL-Reward-Gemma-2-27B' in model_name:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = LDLRewardModel27B.from_pretrained(model_name, device_map="auto", cache_dir = cache_directory)
+
     else:
         model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
             device_map=device,
             cache_dir=cache_directory,
-            # attn_implementation="flash_attention_2",
+            attn_implementation="flash_attention_2",
             num_labels=1,
         )
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+
 
     get_modified_model = False
     print(args)
@@ -217,10 +230,9 @@ def main():
     if 'deberta' in model_name:
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
         features_diff, chosen_scores, rejected_scores = process_deberta_examples(model, tokenizer, filtered_dataset, device, args)
-    elif 'LDL-Reward' in model_name:
-
+    elif 'Gemma' in model_name:
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
-        features_diff, chosen_scores, rejected_scores = process_examples_ldl(model, tokenizer, filtered_dataset, device, args)
+        features_diff, chosen_scores, rejected_scores = process_examples_gemma(model, tokenizer, filtered_dataset, device, args)
     else:    
         # Process the examples
         features_chosen, features_rejected, features_chosen_full_length, features_rejected_full_length, \
