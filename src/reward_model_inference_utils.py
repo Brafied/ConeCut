@@ -144,7 +144,6 @@ def process_examples_gemma(model, tokenizer, dataset, device, args):
 def process_examples(model, tokenizer, dataset, device, args):
     """Process dataset examples and compute features."""
     
-
     print(model)
     features_chosen = []
     features_chosen_full_length = []
@@ -163,12 +162,14 @@ def process_examples(model, tokenizer, dataset, device, args):
         conv1 = [{"role": "user", "content": prompt}, {"role": "assistant", "content": chosen_completion}]
         conv2 = [{"role": "user", "content": prompt}, {"role": "assistant", "content": rejected_completion}]
 
+        tokenizer.padding_side = "left"
         conv1_formatted = tokenizer.apply_chat_template(conv1, tokenize=False)
         conv2_formatted = tokenizer.apply_chat_template(conv2, tokenize=False)
-
-        conv1_tokenized = tokenizer(conv1_formatted, return_tensors="pt", truncation=True).to(device).to(torch.bfloat16)
-        conv2_tokenized = tokenizer(conv2_formatted, return_tensors="pt", truncation=True).to(device).to(torch.bfloat16)
-
+        conv1_tokenized = tokenizer(conv1_formatted, return_tensors="pt", padding=True, truncation=False).to(device)
+        # .to(torch.bfloat16)
+        conv2_tokenized = tokenizer(conv2_formatted, return_tensors="pt",  padding=True, truncation=False).to(device)
+        # .to(torch.bfloat16)
+        model.eval()
         with torch.no_grad():
             # with torch.amp.autocast('cuda'): #casting causes issues with BF16
                 output_1 = model(**conv1_tokenized, output_hidden_states=True)
@@ -190,13 +191,10 @@ def process_examples(model, tokenizer, dataset, device, args):
                 else:
                     hidden_states1 = output_1.hidden_states
                     hidden_states2 = output_2.hidden_states
-
                     # Get the last token embedding that isn't a PAD
-
                     cls_embedding1 = hidden_states1[-1][:, -1, :].cpu().squeeze()
                     cls_embedding2 = hidden_states2[-1][:, -1, :].cpu().squeeze()
 
-                
                 if args.shorten_size:
                     features_chosen.append(cls_embedding1[:int(args.shorten_size)].cpu())
                     features_rejected.append(cls_embedding2[:int(args.shorten_size)].cpu())

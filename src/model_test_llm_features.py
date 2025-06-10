@@ -1,5 +1,6 @@
 import os
 
+
 os.environ["HF_HOME"] = "/scratch/general/vast/u1472659/huggingface_cache"
 os.environ["TRANSFORMERS_CACHE"] = "/scratch/general/vast/u1472659/huggingface_cache/transformers"
 os.environ["HF_DATASETS_CACHE"] = "/scratch/general/vast/u1472659/huggingface_cache/datasets"
@@ -15,6 +16,7 @@ import numpy as np
 import pickle as pkl
 import torch.nn as nn
 from tqdm import tqdm
+from collections import Counter
 from ldlreward import LDLRewardModel27B
 
 
@@ -31,13 +33,13 @@ from reward_model_inference_utils import run_redundancy_tests, process_examples,
 
 filter_subsets_dict = {'chat': ['alpacaeval-easy', 'alpacaeval-length', 'alpacaeval-hard', 'mt-bench-easy', 'mt-bench-medium'],
                         'chat_hard': [ 'mt-bench-hard', 'llmbar-natural', 'llmbar-adver-neighbor', 'llmbar-adver-GPTInst', 'llmbar-adver-GPTOut', 'llmbar-adver-manual'],
-                        'safety': ['refusals-dangerous', 'refusals-offensive', 'xstest-should-refuse', 'xstest-should-respond', 'do not answer'],
+                        'safety': ['refusals-dangerous', 'refusals-offensive', 'xstest-should-refuse', 'xstest-should-respond', 'donotanswer'],
                         'reasoning': ['math-prm', 'hep-cpp', 'hep-go', 'hep-java', 'hep-js', 'hep-python', 'hep-rust']}
 
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Process reward bench dataset with optional hard subset filtering.")
-    parser.add_argument("--filter_by_subset", default="chat_hard", help="Filter for hard subsets in the reward bench dataset.")
+    parser.add_argument("--filter_by_subset", default="", help="Filter for hard subsets in the reward bench dataset.")
     #parser.add_argument("--chat", action="store_true", help="Filter for regular/easy subsets in the reward bench dataset.")
     parser.add_argument("--shorten_size", default="768", help="Take full feature length or only the first 768 dimensions")  
     parser.add_argument("--using_peft", action='store_true', help='If set, use a fine-tuned PEFT model, otherwise use the base model')
@@ -117,8 +119,8 @@ def process_deberta_examples(model, tokenizer, dataset, device, args):
 
 def main():
     args = parse_args()
-    # model_name = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
-    model_name = "nicolinho/QRM-Gemma-2-27B"
+    model_name = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
+    # model_name = "nicolinho/QRM-Gemma-2-27B"
     # model_name = "ShikaiChen/LDL-Reward-Gemma-2-27B-v0.1"
     # model_name= "OpenAssistant/reward-model-deberta-v3-large-v2"
     # model_name = "/scratch/general/vast/u1472659/lora_llama_ft/merged_model/"
@@ -158,10 +160,12 @@ def main():
             attn_implementation="flash_attention_2",
             num_labels=1,
         )
+        
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-
+    
     get_modified_model = False
+
     print(args)
     if args.using_peft:
     # if 'freeze' in script_args.peft_name or script_args.freeze_pretrained:
@@ -244,6 +248,26 @@ def main():
     accuracy, correct_count, chosen_np_arr, rejected_np_arr, correct_indices = calculate_accuracy(
         chosen_scores, rejected_scores)
     
+
+    all_fine_grain_data_list = [row['subset'] for row in filtered_dataset]
+
+    item_counts = Counter(all_fine_grain_data_list)
+
+    total_correct_for_each_fine_grain_label = {}
+
+    for x in set(all_fine_grain_data_list):
+        total_correct_for_each_fine_grain_label[x] = 0
+    
+    for correct_pred_index in correct_indices:
+        total_correct_for_each_fine_grain_label[all_fine_grain_data_list[correct_pred_index]]+=1
+    
+    print(total_correct_for_each_fine_grain_label)
+    print(item_counts)  
+
+    logging.info(f"The sub dataset level correct are {total_correct_for_each_fine_grain_label}")
+    logging.info(f"Total examples are {item_counts}")
+
+
     logging.info(f"Total {correct_count} datapoints where we get correct predictions out of {len(chosen_scores)}")
     logging.info(f"The percentage where score of chosen is greater than rejected is {accuracy:.2f}%")
     print(f"The percentage where score of chosen is greater than rejected is {accuracy:.2f}%")
