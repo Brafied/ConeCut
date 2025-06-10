@@ -1,0 +1,4 @@
+[submodule "external/rewardbench"]
+	path = external/rewardbench
+	url = https://github.com/purbid/reward-bench.git
+	branch = main
