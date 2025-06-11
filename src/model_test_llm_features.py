@@ -28,7 +28,9 @@ from  safetensors import safe_open
 from peft import AutoPeftModelForSequenceClassification
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from reward_bench_adapter import run_rm_subset
 from reward_model_inference_utils import run_redundancy_tests, process_examples, calculate_accuracy, process_examples_gemma
+
 
 
 filter_subsets_dict = {'chat': ['alpacaeval-easy', 'alpacaeval-length', 'alpacaeval-hard', 'mt-bench-easy', 'mt-bench-medium'],
