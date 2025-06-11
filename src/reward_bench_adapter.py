@@ -69,7 +69,7 @@ def forward_collect(model, tokenizer, texts, device, max_length=2048):
     with torch.no_grad():
         out = model(**inputs, output_hidden_states=True)
     logits  = out.logits.float().squeeze(-1).cpu()
-    h_last  = out.hidden_states[-1][:,0,:].cpu()   # CLS / BOS embedding
+    h_last  = out.hidden_states[-1][:,-1,:].cpu()   
     return logits, h_last
 
 
