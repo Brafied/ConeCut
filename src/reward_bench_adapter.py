@@ -6,7 +6,8 @@ import torch, math, random, inspect
 def build_rm(model_id: str,
              torch_dtype=torch.bfloat16,
              quantize_toggle: bool | None = None,
-             attn_impl: str | None = None):
+             attn_impl: str | None = None,
+             cache_dir: str | None = None):
 
     cfg = REWARD_MODEL_CONFIG.get(model_id, REWARD_MODEL_CONFIG["default"])
     model_builder     = cfg["model_builder"]
@@ -36,7 +37,7 @@ def build_rm(model_id: str,
     if attn_impl:
         model_kwargs["attn_implementation"] = attn_impl
 
-    model  = model_builder(model_id, **model_kwargs, trust_remote_code=False)
+    model  = model_builder(model_id, **model_kwargs, trust_remote_code=False, cache_dir=cache_dir)
     tok    = AutoTokenizer.from_pretrained(model_id)
     return tok, model
 
@@ -77,9 +78,10 @@ def run_rm_subset(model_id: str,
                   keep_indices: list[int] | None = None,
                   batch_size: int = 8,
                   torch_dtype=torch.bfloat16,
-                  max_length: int = 2048):
+                  max_length: int = 2048,
+                  cache_dir: str | None = None):
 
-    tok, rm = build_rm(model_id, torch_dtype=torch_dtype)
+    tok, rm = build_rm(model_id, torch_dtype=torch_dtype, cache_dir=cache_dir)
     device  = next(rm.parameters()).device
 
 
