@@ -192,7 +192,7 @@ warnings.filterwarnings('ignore')
 
 from utils import load_all_data, verify_linear_dependence
 
-def find_redundancy(solve_by="res", data_name = "grammar", model_name = "skyworks_llama", solver = 'nnls'):
+def find_redundancy(solve_by="res", data_name = "grammar", model_name = "skyworks_llama", solver = 'nnls', threshold = 0.95):
     # Use existing logger instead of creating a new one
     logger = logging.getLogger(__name__)
     logger.info("************ redundancy detection started **********************")
@@ -281,7 +281,7 @@ def find_redundancy(solve_by="res", data_name = "grammar", model_name = "skywork
         if solve_by == "res":
             is_redundant = residual <= adaptive_threshold
         else:
-            is_redundant = r2 >= r2_threshold
+            is_redundant = r2 >= threshold
 
         if is_redundant:
             redundant_inds.append(i)
@@ -328,15 +328,15 @@ def find_redundancy(solve_by="res", data_name = "grammar", model_name = "skywork
     nnls_count = sum(1 for res in results if res['method'] == 'nnls')
     logger.info(f"Method usage: lstsq = {lstsq_count} ({lstsq_count / num_examples * 100:.2f}%), nnls = {nnls_count} ({nnls_count / num_examples * 100:.2f}%)")
 
-    # Save indices - using absolute path from current working directory
+    # Save indices - using absolute path from current working directory with threshold in path
     import os
     save_dir = f'data/{model_name}_features'
     os.makedirs(save_dir, exist_ok=True)
     
-    with open(f'{save_dir}/non_redundant_{data_name}_{solver}_{r2_threshold}.pkl', 'wb') as f:
+    with open(f'{save_dir}/non_redundant_{data_name}_{solver}_{threshold}.pkl', 'wb') as f:
         pickle.dump(non_redundant_inds, f)
 
-    with open(f'{save_dir}/redundant_{data_name}_{solver}_{r2_threshold}.pkl', 'wb') as f:
+    with open(f'{save_dir}/redundant_{data_name}_{solver}_{threshold}.pkl', 'wb') as f:
         pickle.dump(redundant_inds, f)
 
     logger.info("Non-redundant and redundant indices saved to pickle files.")
@@ -346,8 +346,9 @@ if __name__ == "__main__":
     parser.add_argument('--data_name', type=str, default="features_trained_from_scratch__grammaticality", help="Name of the dataset")
     parser.add_argument('--model_name', type=str, default="skyworks_llama", help="Name of the model")
     parser.add_argument('--solver', type=str, default="nnls", help="Name of the solver")
+    parser.add_argument('--threshold', type=float, default=0.95, help="R2 threshold for redundancy detection")
 
     args = parser.parse_args()
     os.makedirs(f"data/{args.model_name}_features", exist_ok=True)
 
-    find_redundancy(solve_by = "r2", data_name=args.data_name, model_name=args.model_name, solver=args.solver)
+    find_redundancy(solve_by = "r2", data_name=args.data_name, model_name=args.model_name, solver=args.solver, threshold=args.threshold)

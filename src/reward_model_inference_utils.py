@@ -14,7 +14,7 @@ def calculate_accuracy(chosen_scores, rejected_scores):
     correct_indices = np.where(comparison)[0]
     
     return accuracy, len(correct_indices), chosen_np_arr, rejected_np_arr, correct_indices
-def run_redundancy_tests(chosen_scores, rejected_scores, redundant_indices, total_dataset_size):
+def run_redundancy_tests(chosen_scores, rejected_scores, redundant_indices, total_dataset_size, section_name=None):
     """Run redundancy tests using pre-computed scores instead of re-running the model."""
     
     # Calculate accuracy and correct predictions for full dataset

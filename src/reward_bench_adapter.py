@@ -60,7 +60,8 @@ def build_rm_pipeline(model_id: str,
             model = model_builder(model_id, **model_kwargs, trust_remote_code=True)
     else:
         model = model_builder(model_id, **model_kwargs, trust_remote_code=True, cache_dir=cache_dir)
-    tok = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir)
+    
+    tok = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir, trust_remote_code=True)
     
     # Build pipeline using RewardBench's system
     reward_pipe = pipeline_builder(
